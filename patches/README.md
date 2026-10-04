@@ -6,7 +6,7 @@ require, the board DTS, and the three VDPU346 rkvdec commits kept locally by
 user decision (VDPU346 HEVC decode has no upstream driver yet).
 
 Base: **v7.3-rc5** (`72d3fcf802c4`), the commit all five apply to in order.
-`kernel/fetch.sh` clones that tag into `build/kernel`.
+`fetch.sh` clones that tag into `build/kernel`.
 
 | # | patch | what it does |
 |---|---|---|
@@ -19,12 +19,12 @@ Base: **v7.3-rc5** (`72d3fcf802c4`), the commit all five apply to in order.
 ## Reconstructing the tree
 
 ```sh
-kernel/fetch.sh                  # -> build/kernel, tag v7.3-rc5
-kernel/build.sh                  # git am, config, Image + dtbs + modules
+./fetch.sh                  # -> build/kernel, tag v7.3-rc5
+./build.sh                  # git am, config, Image + dtbs + modules
 ```
 
-`kernel/build.sh` applies the five patches to `build/kernel` with
-`git am`, copies `kernel/config/kernel.config` over `build/kernel/.config`, runs
+`build.sh` applies the five patches to `build/kernel` with
+`git am`, copies `config/kernel.config` over `build/kernel/.config`, runs
 `make olddefconfig`, and builds `Image`, `dtbs` and `modules`. The finished
 `Image`, `rk3568-t2.dtb` and module tree land in `build/out/`.
 
@@ -32,7 +32,7 @@ The equivalent manual recipe:
 
 ```sh
 cd build/kernel
-git am ../../kernel/patches/*.patch    # the glob expands in numeric order, 0001 -> 0005
+git am ../../patches/*.patch    # the glob expands in numeric order, 0001 -> 0005
 ```
 
 All five apply cleanly to pristine v7.3-rc5 in that order. The blobs the
@@ -54,11 +54,12 @@ stay outside them, because they are not kernel source (or are gitignored) and so
 cannot be `git am`'d:
 
 * **`.config`** — gitignored inside the kernel tree, so it is not a patch. It is
-  committed here as `kernel/config/kernel.config` and copied into the fresh tree
-  by `kernel/build.sh`. It is what sets `CONFIG_BRCMFMAC_PCIE=y` and embeds the
-  initramfs.
-* **the bring-up initramfs source tree** referenced by `CONFIG_INITRAMFS_SOURCE`
-  (provided by `rootfs/initramfs/`), plus the WiFi firmware blobs below.
+  committed here as `config/kernel.config` and copied into the fresh tree by
+  `build.sh`. It is what sets `CONFIG_BRCMFMAC_PCIE=y`.
+* **the bring-up initramfs source tree** (the image repository's
+  `rootfs/initramfs/`), plus the WiFi firmware blobs below. `CONFIG_INITRAMFS_SOURCE`
+  stays empty here: the Image is plain, and the initramfs is assembled into the
+  boot FIT by `t2-mkfit` instead (see the top-level README).
 
 ## Firmware
 
@@ -74,9 +75,9 @@ can enumerate before the root filesystem is switched in, put it in the
 | `brcmfmac43752-pcie.clm_blob` | `clm_bcm43752a2_ag.blob` |
 
 Only the `.bin` is mandatory (`txcap_blob` is optional and reported missing). The
-blobs are not redistributable; they are committed in `rootfs/firmware/brcm/`, and
-`rootfs/fetch.sh` verifies them and can refresh them from a running T2 or a
-vendor update. Also enable
+blobs are not redistributable; they are committed in the image repository
+(`rootfs/firmware/brcm/`), whose `rootfs/fetch.sh` verifies them and can refresh
+them from a running T2 or a vendor update. Also enable
 `CONFIG_BRCMFMAC_PCIE=y` — mainline's `BRCMFMAC_SDIO` alone will not bind this
 part, which is a PCIe device (`14e4:449d`), not SDIO.
 

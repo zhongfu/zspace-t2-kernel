@@ -3,12 +3,12 @@
 # Build the three ZSpace T2 kernel Debian packages from build.sh's output.
 #
 # A hand-written DEBIAN/ control directory plus `dpkg-deb --build`, exactly the
-# style rootfs/packages/t2-utils/build.sh uses and for the same reasons: the
-# build image has dpkg but not dpkg-dev, and the payloads are file trees plus
-# one maintainer script, so debhelper's dh_* machinery would add a build
-# dependency and a source package nobody builds.  `--root-owner-group`
-# normalises the uid/gid, and SOURCE_DATE_EPOCH pins every ar/tar member mtime,
-# so the same inputs build the same .deb bytes.
+# style the t2-utils package's build.sh (in the utils repository) uses and for
+# the same reasons: the build image has dpkg but not dpkg-dev, and the payloads
+# are file trees plus one maintainer script, so debhelper's dh_* machinery would
+# add a build dependency and a source package nobody builds.
+# `--root-owner-group` normalises the uid/gid, and SOURCE_DATE_EPOCH pins every
+# ar/tar member mtime, so the same inputs build the same .deb bytes.
 #
 # Inputs (all build.sh outputs, all read-only here):
 #   $T2_KERNEL_TREE/include/config/auto.conf   the configured tree

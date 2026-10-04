@@ -2,7 +2,7 @@
 #
 # Fetch the mainline Linux tree for the ZSpace T2 build.
 #
-# Clones tag v7.3-rc5 (the base the five kernel/patches/*.patch apply to) into
+# Clones tag v7.3-rc5 (the base the five patches/*.patch apply to) into
 # <repo>/build/kernel. Shallow is enough: the patches are applied on top as
 # commits, nothing older is needed.
 #

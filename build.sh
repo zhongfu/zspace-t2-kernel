@@ -3,13 +3,13 @@
 # Build the ZSpace T2 kernel from the fetched mainline tree.
 #
 # Steps:
-#   1. apply the five kernel/patches/*.patch to build/kernel (git am)
-#   2. copy kernel/config/kernel.config over build/kernel/.config
+#   1. apply the five patches/*.patch to build/kernel (git am)
+#   2. copy config/kernel.config over build/kernel/.config
 #   3. make olddefconfig
 #   4. make -jN Image dtbs modules
 #   5. install Image, rk3568-t2.dtb and the module tree into build/out/
 #
-# Run kernel/fetch.sh first.  The script refuses to run when build/kernel is
+# Run fetch.sh first.  The script refuses to run when build/kernel is
 # missing, or when it carries only some of the five patches.  A tree that
 # already carries all five is rebuilt as it is, so the image build can re-run
 # this step after a failed or partial build.
@@ -71,7 +71,7 @@ if [ ! -f "$cfg" ]; then
 fi
 
 if ! git -C "$tree" rev-parse --git-dir >/dev/null 2>&1; then
-    die "no Linux tree at $tree - run kernel/fetch.sh first"
+    die "no Linux tree at $tree - run fetch.sh first"
 fi
 
 shopt -s nullglob
@@ -81,7 +81,7 @@ if [ ${#patches[@]} -eq 0 ]; then
     die "no patches found in $patchdir"
 fi
 
-# A tree that already carries every patch is not an error: build-all.sh re-runs
+# A tree that already carries every patch is not an error: the image build re-runs
 # this script after a failed or partial build, and re-applying the patches would
 # fail.  A tree that carries only some of them is ambiguous, so it still stops.
 applied=0
@@ -92,7 +92,7 @@ for p in "${patches[@]}"; do
 done
 if [ "$applied" -gt 0 ] && [ "$applied" -lt "${#patches[@]}" ]; then
     die "$tree carries $applied of ${#patches[@]} patches; remove the tree and
-     re-run kernel/fetch.sh for a clean build"
+     re-run fetch.sh for a clean build"
 fi
 
 if [ -n "$CROSS_COMPILE" ] && ! command -v "${CROSS_COMPILE}gcc" >/dev/null 2>&1; then

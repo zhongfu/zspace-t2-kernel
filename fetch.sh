@@ -11,7 +11,7 @@
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo=$(CDPATH= cd -- "$here/.." && pwd)
+repo=$here
 
 url=${LINUX_URL:-https://github.com/torvalds/linux.git}
 tag=v7.3-rc5

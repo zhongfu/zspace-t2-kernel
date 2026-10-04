@@ -149,7 +149,11 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 build_deb() { # DIR NAME
     dir=$1
     name=$2
-    size=$(du -sk "$dir" | cut -f1)
+    # --apparent-size: Installed-Size is the size of the installed files, and a
+    # plain `du -sk` reports the *allocated* blocks, which lies when the staging
+    # directory sits on a filesystem that reports compressed/sparse usage (ZFS
+    # gives the 27 MB Image a handful of KiB) instead of the file sizes.
+    size=$(du -sk --apparent-size "$dir" | cut -f1)
     sed -e "s/@REL@/$rel/g" \
         -e "s/@VERSION@/$version/g" \
         -e "s/@INSTALLED_SIZE@/$size/g" \

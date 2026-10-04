@@ -20,7 +20,7 @@
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo=$(CDPATH= cd -- "$here/.." && pwd)
+repo=$here
 
 tree=$repo/build/kernel
 out=$repo/build/out
@@ -149,7 +149,14 @@ mkdir -p "$out"
 cp -f "$tree/arch/arm64/boot/Image" "$out/Image"
 cp -f "$tree/arch/arm64/boot/dts/rockchip/rk3568-t2.dtb" "$out/rk3568-t2.dtb"
 rm -rf "$out/modules"
-make "${make_opts[@]}" INSTALL_MOD_PATH="$out/modules" modules_install >/dev/null
+# The config builds modules with CONFIG_DEBUG_INFO=y, which leaves every .ko with
+# its DWARF sections (the module set is ~349 MB apparent, against a 6 GiB image).
+# INSTALL_MOD_STRIP makes modules_install run "$(STRIP) --strip-debug" on each
+# installed .ko - $(STRIP) is $(CROSS_COMPILE)strip, i.e. the cross binutils - so
+# the packaged modules carry no debug info.  debuginfo is available separately if
+# ever wanted; nothing here needs it.
+make "${make_opts[@]}" INSTALL_MOD_PATH="$out/modules" \
+    INSTALL_MOD_STRIP=--strip-debug modules_install >/dev/null
 
 echo "  $out/Image"
 echo "  $out/rk3568-t2.dtb"

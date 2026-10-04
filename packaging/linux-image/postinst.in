@@ -10,6 +10,13 @@
 # t2-utils).  Keeping the kernel Image plain means a ramdisk change never needs
 # a kernel rebuild.
 #
+# The FIT's ramdisk is not what the entries boot.  An extlinux entry that names
+# an `fdt` makes U-Boot pass "-" as bootm's ramdisk argument and drop the FIT's
+# own subimage, so /boot/initrd.img-<rel> is also copied into the tree as
+# /initrd.img (and /boot/initramfs-t2.gz as /initramfs-t2.gz) and every entry
+# names the file.  The FIT's copy is what the vendor-layout boot partition
+# mirror boots.
+#
 # The descriptor and the A/B rules are exactly the ones images/t2-boot-fat.py
 # generates at image-build time.  t2-boot-commit.sh (t2-utils) is the other
 # half: it un-arms the counter once a boot has reached userspace.
@@ -46,6 +53,14 @@ else
     INITRAMFS=/boot/initrd.img-$REL
     [ -f "$INITRAMFS" ] || INITRAMFS=/boot/initramfs-t2.gz
 fi
+# The installer ramdisk as a file in the boot tree, named by the `t2-installer`
+# entry.  The boot tree's entries name their ramdisk explicitly because U-Boot
+# drops a FIT's own ramdisk whenever the entry also names an `fdt` (pxe_utils'
+# label_boot passes "-" as bootm's ramdisk argument, which boot_get_ramdisk
+# reads as "no ramdisk"), and the kernel then panics with no /init and no root=.
+# The FIT keeps its ramdisk for the vendor-layout boot partition mirror, but the
+# entry-named file is what boots.
+FLASH_INITRAMFS=${T2_FLASH_INITRAMFS:-/boot/initramfs-t2.gz}
 BOOT_DIR=${T2_BOOT_DIR:-}
 MKFIT=${T2_MKFIT:-t2-mkfit}
 FW_SETENV=${T2_FW_SETENV:-fw_setenv}
@@ -155,6 +170,23 @@ if ! cp -f "$DTB" "$BOOT_DIR/$DTB_NAME"; then
     warn "could not copy $DTB_NAME into the boot tree"
 fi
 
+# The ramdisks as files: the entries name these, not the FIT's subimage (see
+# FLASH_INITRAMFS above).  Both names match what the rootfs carries under /boot,
+# so a boot tree is a copy of that.  A missing installer ramdisk only costs the
+# `t2-installer` entry, which is then not written.
+cp -f "$INITRAMFS" "$BOOT_DIR/initrd.img" ||
+    warn "could not copy $INITRAMFS into the boot tree as /initrd.img"
+flash_ramdisk=
+if [ -f "$FLASH_INITRAMFS" ]; then
+    if cp -f "$FLASH_INITRAMFS" "$BOOT_DIR/initramfs-t2.gz"; then
+        flash_ramdisk=initramfs-t2.gz
+    else
+        warn "could not copy $FLASH_INITRAMFS into the boot tree"
+    fi
+else
+    warn "$FLASH_INITRAMFS is missing - no t2-installer entry is written"
+fi
+
 # The bootstd descriptor, rebuilt from the files that now sit next to it (same
 # construction as t2-boot-fat.py's conf_text()).  `t2-emmc` is the default;
 # `t2-installer` reaches the initramfs' flash mode from the same menu.  The
@@ -164,13 +196,18 @@ conf=$BOOT_DIR/extlinux/extlinux.conf
 mkdir -p "$BOOT_DIR/extlinux"
 {
     echo "default t2-emmc"
-    echo "label t2-installer"
-    printf '\tkernel /Image\n\tfdt /%s\n\tappend %s\n' "$DTB_NAME" "$FLASH_APPEND"
+    if [ -n "$flash_ramdisk" ]; then
+        echo "label t2-installer"
+        printf '\tkernel /Image\n\tinitrd /%s\n\tfdt /%s\n\tappend %s\n' \
+            "$flash_ramdisk" "$DTB_NAME" "$FLASH_APPEND"
+    fi
     echo "label t2-emmc"
-    printf '\tkernel /Image\n\tfdt /%s\n\tappend %s\n' "$DTB_NAME" "$APPEND"
+    printf '\tkernel /Image\n\tinitrd /initrd.img\n\tfdt /%s\n\tappend %s\n' \
+        "$DTB_NAME" "$APPEND"
     if [ -e "$BOOT_DIR/Image.old" ]; then
         echo "label t2-emmc-old"
-        printf '\tkernel /Image.old\n\tfdt /%s\n\tappend %s\n' "$DTB_NAME" "$APPEND"
+        printf '\tkernel /Image.old\n\tinitrd /initrd.img\n\tfdt /%s\n\tappend %s\n' \
+            "$DTB_NAME" "$APPEND"
     fi
 } > "$conf.tmp" && mv -f "$conf.tmp" "$BOOT_DIR/extlinux/extlinux.conf" ||
     warn "could not write $conf"

@@ -1,0 +1,20 @@
+Package: linux-image-@REL@
+Version: @VERSION@
+Architecture: arm64
+Section: kernel
+Priority: optional
+Maintainer: zhongfu <me@zhongfu.li>
+Depends: t2-utils, t2-initramfs
+Installed-Size: @INSTALLED_SIZE@
+Description: ZSpace T2 kernel Image and device tree
+ The plain arm64 kernel Image and the rk3568-t2 device tree for the ZSpace T2
+ (Rockchip RK3568), built from mainline Linux with the board patch set.
+ .
+ The Image carries no initramfs.  The boot tree - a FAT partition, not the
+ rootfs' /boot - gets a FIT (Image + device tree + the initramfs from
+ t2-initramfs) that this package's postinst assembles with t2-mkfit, so
+ changing the installer inside the initramfs never needs a kernel rebuild.
+ .
+ The postinst only touches a boot tree when T2_BOOT_DIR names one, so
+ installing the package changes nothing outside the rootfs on a board where
+ the installer owns the boot tree.  /boot/Image on the rootfs stays plain.

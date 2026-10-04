@@ -1,0 +1,190 @@
+#!/bin/sh
+# linux-image-@REL@ postinst: assemble the boot FIT in the boot tree.
+#
+# The rootfs' /boot/Image is plain - this package installs it with no
+# initramfs.  The file U-Boot actually loads lives in the *boot tree* (a FAT
+# partition; /boot is an ordinary rootfs directory, not that partition) and is
+# a FIT: Image + rk3568-t2.dtb + the initramfs from t2-initramfs, assembled
+# with t2-mkfit (shipped by t2-utils).  Splitting it this way means an
+# installer tweak - the initramfs carries the installer - never needs a kernel
+# rebuild.
+#
+# The descriptor and the A/B rules are exactly the ones images/t2-boot-fat.py
+# generates at image-build time.  t2-boot-commit.sh (t2-utils) is the other
+# half: it un-arms the counter once a boot has reached userspace.
+#
+# T2_BOOT_DIR has no default.  Nothing on today's board mounts the boot FAT at
+# a fixed path, and dpkg must not guess at a partition: an unset T2_BOOT_DIR
+# means "no boot tree here, skip politely" (that is the image-build chroot and
+# every board today; the installer writes the boot tree).  Partition discovery
+# belongs to t2-utils, which already owns the A/B protocol.
+#
+# Nothing here may fail the dpkg run: a missing boot tree, a missing t2-mkfit
+# or an unreadable environment is a warning and a skip, never an error.  The
+# rootfs is still correctly installed either way, and the installer or a later
+# kernel package can rebuild the boot tree.
+#
+# Test overrides (the same style t2-boot-commit.sh uses for its mount): the
+# input paths and the tools can be pointed elsewhere, so the whole postinst
+# runs against a temp directory without a board - T2_IMAGE, T2_DTB,
+# T2_INITRAMFS, T2_MKFIT, T2_FW_SETENV, T2_INITIAL_ENV, T2_MODULES_DIR.
+set -u
+
+REL=@REL@
+KERNEL=${T2_IMAGE:-/boot/Image}
+DTB=${T2_DTB:-/boot/rk3568-t2.dtb}
+INITRAMFS=${T2_INITRAMFS:-/boot/initramfs-t2.gz}
+BOOT_DIR=${T2_BOOT_DIR:-}
+MKFIT=${T2_MKFIT:-t2-mkfit}
+FW_SETENV=${T2_FW_SETENV:-fw_setenv}
+INITIAL_ENV=${T2_INITIAL_ENV:-/etc/u-boot-initial-env}
+MODULES_DIR=${T2_MODULES_DIR:-/lib/modules}
+
+# Byte-identical to images/t2-boot-fat.py's DEFAULT_APPEND,
+# DEFAULT_FLASH_APPEND, KERNEL_NAME, FALLBACK_KERNEL_NAME, CONF_LABEL,
+# FALLBACK_LABEL and FLASH_LABEL.  The duplication is deliberate: the boot
+# tree is regenerated on the board, where that Python tool does not exist, and
+# the descriptor has to keep naming the same files U-Boot's compiled
+# `altbootcmd` fatloads (`/Image.old`).
+DTB_NAME=rk3568-t2.dtb
+APPEND="root=LABEL=zspace-rootfs rootfstype=ext4 rw rootwait rootflags=errors=remount-ro panic=15"
+FLASH_APPEND="t2.mode=flash"
+
+log() { echo "linux-image-$REL: $*"; }
+warn() { echo "linux-image-$REL: warning: $*" >&2; }
+
+# dpkg also calls this on abort-*; only `configure` has work to do, and an
+# unexpected argument is not worth failing an install over.
+case ${1:-} in
+    configure) ;;
+    *) exit 0 ;;
+esac
+
+if [ -z "$BOOT_DIR" ]; then
+    log "T2_BOOT_DIR is not set - no boot tree to update here"
+    log "the installer assembles the boot FIT; the rootfs files are installed"
+    exit 0
+fi
+
+if [ ! -d "$BOOT_DIR" ]; then
+    warn "T2_BOOT_DIR=$BOOT_DIR is not a directory - boot tree not updated"
+    exit 0
+fi
+
+# A boot tree is empty (freshly mkfs.vfat'ed) or already carries the files
+# t2-boot-fat.py writes.  Anything else is not a boot tree and is left alone:
+# writing a 60 MB FIT into an unmounted mount point on the rootfs would be
+# worse than not updating the boot tree.
+if [ -n "$(ls -A "$BOOT_DIR" 2>/dev/null)" ] &&
+   [ ! -e "$BOOT_DIR/Image" ] && [ ! -d "$BOOT_DIR/extlinux" ]; then
+    warn "$BOOT_DIR does not look like a boot tree (no /Image, no /extlinux) - not updated"
+    exit 0
+fi
+
+for f in "$KERNEL" "$DTB" "$INITRAMFS"; do
+    if [ ! -f "$f" ]; then
+        warn "$f is missing - boot tree not updated"
+        exit 0
+    fi
+done
+
+if ! command -v "$MKFIT" >/dev/null 2>&1; then
+    warn "$MKFIT is not on PATH (t2-utils ships it) - boot tree not updated"
+    exit 0
+fi
+
+# Assemble the FIT under a temporary name in the boot tree, then rename: a
+# reader never sees a half-written /Image.  The rootfs' /boot/Image stays
+# plain - only the boot tree's copy carries the initramfs.
+tmp_fit=$BOOT_DIR/.Image.new
+rm -f "$tmp_fit"
+if ! "$MKFIT" --kernel "$KERNEL" --dtb "$DTB" --ramdisk "$INITRAMFS" --out "$tmp_fit"; then
+    warn "$MKFIT failed - boot tree not updated"
+    rm -f "$tmp_fit"
+    exit 0
+fi
+
+# Plain copies only: the boot partition is FAT, so no symlinks and no
+# hardlinks.  The existing kernel keeps its fixed name /Image.old (U-Boot's
+# compiled altbootcmd fatloads exactly that), and only one previous kernel is
+# ever kept.
+if [ -e "$BOOT_DIR/Image" ]; then
+    if ! cp -f "$BOOT_DIR/Image" "$BOOT_DIR/Image.old"; then
+        warn "could not copy /Image to /Image.old"
+    fi
+fi
+
+if ! mv -f "$tmp_fit" "$BOOT_DIR/Image"; then
+    warn "could not install the FIT as /Image"
+    rm -f "$tmp_fit"
+    exit 0
+fi
+
+if ! cp -f "$DTB" "$BOOT_DIR/$DTB_NAME"; then
+    warn "could not copy $DTB_NAME into the boot tree"
+fi
+
+# The bootstd descriptor, rebuilt from the files that now sit next to it (same
+# construction as t2-boot-fat.py's conf_text()).  `t2-emmc` is the default;
+# `t2-installer` reaches the initramfs' flash mode from the same menu.  The
+# fallback entry exists only when /Image.old does - it is never the default,
+# altbootcmd loads the file directly.
+conf=$BOOT_DIR/extlinux/extlinux.conf
+mkdir -p "$BOOT_DIR/extlinux"
+{
+    echo "default t2-emmc"
+    echo "label t2-installer"
+    printf '\tkernel /Image\n\tfdt /%s\n\tappend %s\n' "$DTB_NAME" "$FLASH_APPEND"
+    echo "label t2-emmc"
+    printf '\tkernel /Image\n\tfdt /%s\n\tappend %s\n' "$DTB_NAME" "$APPEND"
+    if [ -e "$BOOT_DIR/Image.old" ]; then
+        echo "label t2-emmc-old"
+        printf '\tkernel /Image.old\n\tfdt /%s\n\tappend %s\n' "$DTB_NAME" "$APPEND"
+    fi
+} > "$conf.tmp" && mv -f "$conf.tmp" "$BOOT_DIR/extlinux/extlinux.conf" ||
+    warn "could not write $conf"
+
+if [ -e "$BOOT_DIR/Image.old" ]; then
+    # Arm the boot counter for the kernel just written.  U-Boot's
+    # bootcount_inc()/bootcount_store() only persists a count while
+    # upgrade_available != 0 (drivers/bootcount/bootcount_env.c), so an unarmed
+    # board never counts - and altbootcmd fatloads /Image.old, which exists
+    # only from the second kernel onwards.  t2-boot-commit.sh un-arms both
+    # variables after a good boot.
+    if command -v "$FW_SETENV" >/dev/null 2>&1; then
+        env_file=$BOOT_DIR/uboot.env
+        cfg=$(mktemp)
+        # libubootenv's file layout: <path> <offset> <env size>.  The size is
+        # CONFIG_ENV_SIZE (0x1f000) of the board defconfig, the same value
+        # /etc/fw_env.config carries for t2-boot-commit.sh.
+        printf '%s 0x0 0x1f000\n' "$env_file" > "$cfg"
+        if "$FW_SETENV" -c "$cfg" -f "$INITIAL_ENV" upgrade_available 1 &&
+           "$FW_SETENV" -c "$cfg" -f "$INITIAL_ENV" bootcount 0; then
+            log "armed the A/B counter (upgrade_available=1, bootcount=0)"
+        else
+            warn "could not arm the A/B counter - /Image.old will not be booted automatically"
+        fi
+        rm -f "$cfg"
+    else
+        warn "$FW_SETENV not found - A/B counter not armed"
+    fi
+
+    # apt cannot express "the kernel /Image.old points at", so warn when no
+    # module tree other than this package's own exists: the fallback would boot
+    # an old kernel with no modules - no storage, no NIC.
+    other=
+    for d in "$MODULES_DIR"/*; do
+        [ -d "$d" ] || continue
+        [ "${d##*/}" = "$REL" ] && continue
+        other=1
+        break
+    done
+    if [ -z "$other" ]; then
+        warn "/Image.old is present but $MODULES_DIR holds no tree other than $REL"
+        warn "if the fallback boots, its modules (storage, network) may be missing"
+    fi
+else
+    log "no /Image.old: A/B counter left unarmed (there is nothing to fall back to)"
+fi
+
+exit 0

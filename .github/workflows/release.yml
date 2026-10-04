@@ -1,0 +1,180 @@
+name: Release
+
+# On a v* tag: build the kernel, keep the artefacts as a workflow artefact and
+# publish them on a GitHub release.  The release notes are a changelog (git log
+# since the previous v* tag) followed by an explanation of every file.
+#
+# The three .deb packages are what the image repository pins in
+# components.lock; Image and rk3568-t2.dtb are published raw because the image
+# build assembles its own boot FIT from that pair.  The kernel Image carries no
+# initramfs (contract §3.1), so nothing else is needed to build a FIT.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Native arm64: the board's architecture, and the runner needs no cross
+    # toolchain.  CROSS_COMPILE= (empty) selects the native path in build.sh.
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 300
+    env:
+      CROSS_COMPILE: ''
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve the tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          tag=${INPUT_TAG:-}
+          [ -n "$tag" ] || tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            v*) ;;
+            *) echo "error: '$tag' is not a v* tag" >&2; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "building $tag at $(git rev-parse --short HEAD)"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+
+      - name: Install the build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              bc bison flex libelf-dev libssl-dev zstd
+
+      - name: Fetch the mainline tree
+        run: ./fetch.sh
+
+      - name: Build the kernel
+        run: ./build.sh
+
+      - name: Build the packages
+        run: ./package.sh
+
+      - name: Inspect the packages
+        run: |
+          set -eu
+          for deb in build/debs/*.deb; do
+            echo "== $deb =="
+            dpkg-deb -I "$deb"
+            dpkg-deb -c "$deb"
+          done
+
+      - name: Collect the release assets
+        run: |
+          set -eu
+          mkdir -p dist
+          cp build/debs/*.deb dist/
+          cp build/out/Image build/out/rk3568-t2.dtb dist/
+          ls -l dist
+
+      - name: Upload the assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-assets
+          path: dist
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 0
+
+      - name: Download the assets
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel-assets
+          path: dist
+
+      - name: Build the release notes
+        env:
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -eu
+          {
+            echo "## What changed"
+            echo
+            prev=$(git describe --tags --abbrev=0 --match 'v*' "${TAG}^" 2>/dev/null || true)
+            if [ -n "$prev" ]; then
+              echo "Changes since \`$prev\`:"
+              echo
+              git log --no-merges --pretty='* %s (%h)' "$prev..$TAG"
+            else
+              echo "Changes up to \`$TAG\`:"
+              echo
+              git log --no-merges --pretty='* %s (%h)' "$TAG"
+            fi
+            echo
+            echo "## How to install"
+            echo
+            echo "Copy the three packages to the board and install them together:"
+            echo
+            echo '```'
+            echo 'sudo dpkg -i linux-image-*.deb linux-modules-*.deb linux-headers-*.deb'
+            echo '```'
+            echo
+            echo "The image package is only half of a boot tree update: its postinst"
+            echo 'assembles the boot FIT with `t2-mkfit` when `T2_BOOT_DIR` names the'
+            echo "boot tree, and does nothing when it does not (the installer owns the"
+            echo "boot tree on a fresh system)."
+            echo
+            echo "## Files"
+            echo
+            echo '| File | What it is |'
+            echo '|---|---|'
+            echo '| `linux-image-*-t2_*_arm64.deb` | `/boot/Image` (plain, no initramfs) and `/boot/rk3568-t2.dtb`; postinst assembles the boot FIT |'
+            echo '| `linux-modules-*-t2_*_arm64.deb` | `/lib/modules/<rel>/`, tied to the image by an exact-version dependency |'
+            echo '| `linux-headers-*-t2_*_arm64.deb` | out-of-tree module build tree under `/usr/src/linux-headers-<rel>/` |'
+            echo '| `Image` | the raw arm64 kernel image, for the image build'"'"'s own FIT |'
+            echo '| `rk3568-t2.dtb` | the board device tree, for the image build'"'"'s own FIT |'
+          } > dist/release-notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -eu
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # A re-run of a failed job: refresh the files and the notes.
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --notes-file dist/release-notes.md
+          else
+            gh release create "$TAG" dist/* \
+              --title "$TAG" --notes-file dist/release-notes.md --verify-tag
+          fi
+          echo "published $TAG:"
+          gh release view "$TAG" --json url,assets --jq '.url, (.assets[].name)'

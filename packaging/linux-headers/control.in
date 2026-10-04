@@ -1,0 +1,17 @@
+Package: linux-headers-@REL@
+Version: @VERSION@
+Architecture: arm64
+Section: kernel
+Priority: optional
+Maintainer: zhongfu <me@zhongfu.li>
+Depends: linux-image-@REL@ (= @VERSION@)
+Installed-Size: @INSTALLED_SIZE@
+Description: ZSpace T2 kernel headers for @REL@
+ The prepared build tree for out-of-tree modules against the ZSpace T2 kernel
+ @REL@, installed under /usr/src/linux-headers-@REL@/ with the usual
+ /lib/modules/@REL@/build symlink pointing at it.
+ .
+ The tree is the kernel's own scripts/package/install-extmod-build output: the
+ headers, Kbuild files and the host programs (modpost and friends) that
+ `make -C /lib/modules/@REL@/build M=$PWD modules` needs, so no kernel source
+ checkout is required to build or rebuild a module.

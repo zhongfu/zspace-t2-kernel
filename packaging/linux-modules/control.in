@@ -1,0 +1,15 @@
+Package: linux-modules-@REL@
+Version: @VERSION@
+Architecture: arm64
+Section: kernel
+Priority: optional
+Maintainer: zhongfu <me@zhongfu.li>
+Depends: linux-image-@REL@ (= @VERSION@)
+Installed-Size: @INSTALLED_SIZE@
+Description: ZSpace T2 kernel modules @REL@
+ The loadable kernel modules built with the ZSpace T2 kernel, installed under
+ /lib/modules/@REL@/.
+ .
+ The directory name is the release string baked into the kernel Image, and the
+ version is tied to linux-image-@REL@ exactly, so an Image can never be
+ installed without the modules it was built against.

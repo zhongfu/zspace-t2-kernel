@@ -11,8 +11,12 @@
 #
 # Run kernel/fetch.sh first.  The script refuses to run when build/kernel is
 # missing, or when it carries only some of the five patches.  A tree that
-# already carries all five is rebuilt as it is, so build-all.sh can re-run this
-# step after a failed or partial build.
+# already carries all five is rebuilt as it is, so the image build can re-run
+# this step after a failed or partial build.
+#
+# The Image is plain: CONFIG_INITRAMFS_SOURCE is empty and stays empty.  The
+# boot FIT (Image + rk3568-t2.dtb + the initramfs from t2-initramfs) is
+# assembled on the board by the linux-image postinst with t2-mkfit, not here.
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -20,7 +24,6 @@ repo=$(CDPATH= cd -- "$here/.." && pwd)
 
 tree=$repo/build/kernel
 out=$repo/build/out
-initramfs=$repo/build/initramfs
 patchdir=$here/patches
 cfg=$here/config/kernel.config
 
@@ -37,7 +40,8 @@ and install them into build/out/.
 
 Environment:
   ARCH           kernel architecture       (default: $ARCH)
-  CROSS_COMPILE  toolchain prefix          (default: $CROSS_COMPILE)
+  CROSS_COMPILE  toolchain prefix          (default: $CROSS_COMPILE; set it
+                 empty - CROSS_COMPILE= - to build natively on an arm64 host)
   JOBS           parallel make jobs        (default: nproc)
 EOF
 }
@@ -120,18 +124,16 @@ echo "== kernel config =="
 cp "$cfg" "$tree/.config"
 echo "  copied $cfg -> $tree/.config"
 
-# The committed config leaves CONFIG_INITRAMFS_SOURCE empty. The shipped Image
-# embeds the initramfs tree, so point the symbol at this clone's own tree and
-# refuse to build when that tree is missing rather than embed the wrong thing.
-if [ ! -d "$initramfs" ]; then
-    die "no initramfs at $initramfs - run rootfs/initramfs/build.sh first (the Image embeds it)"
-fi
-"$tree/scripts/config" --file "$tree/.config" \
-    --set-str CONFIG_INITRAMFS_SOURCE "$initramfs"
-echo "  CONFIG_INITRAMFS_SOURCE -> $initramfs"
-
 # --- 3-4. configure and build ---------------------------------------------
-make_opts=(-C "$tree" ARCH="$ARCH")
+# LOCALVERSION= (empty, on the make command line) is deliberate.  The config
+# already carries the whole local version (CONFIG_LOCALVERSION="-t2"), but
+# scripts/setlocalversion appends its own "-g<hash>"/"+" when the build tree is
+# a git checkout that is not exactly at the tagged commit - which ours never is,
+# because build.sh applies the patches on top of v7.3-rc5 as commits.  Setting
+# the make variable to the empty string is the kernel's documented way to say
+# "no VCS suffix"; it does not touch CONFIG_LOCALVERSION, so the release stays
+# the fixed 7.3.0-rc5-t2 that the package and module paths are named after.
+make_opts=(-C "$tree" ARCH="$ARCH" LOCALVERSION=)
 [ -n "$CROSS_COMPILE" ] && make_opts+=(CROSS_COMPILE="$CROSS_COMPILE")
 
 echo "== olddefconfig =="
@@ -139,6 +141,7 @@ make "${make_opts[@]}" olddefconfig
 
 echo "== building Image + dtbs + modules (-j$JOBS) =="
 make "${make_opts[@]}" -j "$JOBS" Image dtbs modules
+echo "  kernelrelease: $(make -s "${make_opts[@]}" kernelrelease)"
 
 # --- 5. install artefacts --------------------------------------------------
 echo "== installing into build/out =="

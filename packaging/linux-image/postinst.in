@@ -1,13 +1,14 @@
 #!/bin/sh
-# linux-image-@REL@ postinst: assemble the boot FIT in the boot tree.
+# linux-image-@REL@ postinst: assemble the eMMC boot FIT in the boot tree.
 #
 # The rootfs' /boot/Image is plain - this package installs it with no
 # initramfs.  The file U-Boot actually loads lives in the *boot tree* (a FAT
 # partition; /boot is an ordinary rootfs directory, not that partition) and is
-# a FIT: Image + rk3568-t2.dtb + the initramfs from t2-initramfs, assembled
-# with t2-mkfit (shipped by t2-utils).  Splitting it this way means an
-# installer tweak - the initramfs carries the installer - never needs a kernel
-# rebuild.
+# a FIT: Image + rk3568-t2.dtb + the distribution's ramdisk from
+# initramfs-tools (/boot/initrd.img-<rel>), or /boot/initramfs-t2.gz from
+# t2-initramfs when a rootfs has none, assembled with t2-mkfit (shipped by
+# t2-utils).  Keeping the kernel Image plain means a ramdisk change never needs
+# a kernel rebuild.
 #
 # The descriptor and the A/B rules are exactly the ones images/t2-boot-fat.py
 # generates at image-build time.  t2-boot-commit.sh (t2-utils) is the other
@@ -27,16 +28,28 @@
 # Test overrides (the same style t2-boot-commit.sh uses for its mount): the
 # input paths and the tools can be pointed elsewhere, so the whole postinst
 # runs against a temp directory without a board - T2_IMAGE, T2_DTB,
-# T2_INITRAMFS, T2_MKFIT, T2_FW_SETENV, T2_INITIAL_ENV, T2_MODULES_DIR.
+# T2_INITRAMFS, T2_MKFIT, T2_FW_SETENV, T2_INITIAL_ENV, T2_MODULES_DIR,
+# T2_UPDATE_INITRAMFS.
 set -u
 
 REL=@REL@
 KERNEL=${T2_IMAGE:-/boot/Image}
 DTB=${T2_DTB:-/boot/rk3568-t2.dtb}
-INITRAMFS=${T2_INITRAMFS:-/boot/initramfs-t2.gz}
+# The ramdisk the FIT carries.  The installed system boots the distribution's
+# initramfs-tools image (/boot/initrd.img-<rel>, generated in the image build and
+# regenerated below on an on-board upgrade); /boot/initramfs-t2.gz from
+# t2-initramfs is the installer ramdisk and stays as the fallback for a rootfs
+# without initramfs-tools.  T2_INITRAMFS overrides both, for tests.
+if [ -n "${T2_INITRAMFS:-}" ]; then
+    INITRAMFS=$T2_INITRAMFS
+else
+    INITRAMFS=/boot/initrd.img-$REL
+    [ -f "$INITRAMFS" ] || INITRAMFS=/boot/initramfs-t2.gz
+fi
 BOOT_DIR=${T2_BOOT_DIR:-}
 MKFIT=${T2_MKFIT:-t2-mkfit}
 FW_SETENV=${T2_FW_SETENV:-fw_setenv}
+UPDATE_INITRAMFS=${T2_UPDATE_INITRAMFS:-/usr/sbin/update-initramfs}
 INITIAL_ENV=${T2_INITIAL_ENV:-/etc/u-boot-initial-env}
 MODULES_DIR=${T2_MODULES_DIR:-/lib/modules}
 
@@ -70,6 +83,24 @@ if [ ! -d "$BOOT_DIR" ]; then
     warn "T2_BOOT_DIR=$BOOT_DIR is not a directory - boot tree not updated"
     exit 0
 fi
+
+# Regenerate the distribution's initramfs for the kernel being configured, the
+# way a Debian kernel package does, and only when there is a boot tree to put it
+# in: the image build already ran this for the kernel it ships (t2-distro's
+# modules stage), so an unset T2_BOOT_DIR means nothing to do.  Best effort - a
+# rootfs without initramfs-tools keeps /boot/initramfs-t2.gz, the installer
+# ramdisk, which is what the FIT assembly below falls back to.
+case ${1:-} in
+    configure)
+        if [ -x "$UPDATE_INITRAMFS" ]; then
+            if "$UPDATE_INITRAMFS" -c -k "$REL" >/dev/null 2>&1; then
+                log "regenerated /boot/initrd.img-$REL (update-initramfs)"
+            else
+                warn "update-initramfs -c -k $REL failed; the existing ramdisk stays"
+            fi
+        fi
+        ;;
+esac
 
 # A boot tree is empty (freshly mkfs.vfat'ed) or already carries the files
 # t2-boot-fat.py writes.  Anything else is not a boot tree and is left alone:

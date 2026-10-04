@@ -43,18 +43,22 @@ partial build can be restarted; a tree carrying only some of them is an error.
 ## Why the Image carries no initramfs
 
 `CONFIG_INITRAMFS_SOURCE` is empty and `build.sh` never points it at a tree.
-The boot FIT — kernel + device tree + initramfs — is assembled at image-build
-time and, for on-board upgrades, by the `linux-image` postinst with `t2-mkfit`
-(which `t2-utils` ships). The reason is coupling: the initramfs carries the
-installer, the installer is iterated constantly and is tied to the rootfs image
-format, so embedding it would make every installer tweak a kernel rebuild and
-make the two repositories depend on each other. The kernel repository builds a
-kernel; the boot tree's FIT is someone else's build step.
+Two boot FITs — kernel + device tree + one ramdisk each — are assembled at
+image-build time, and by the `linux-image` postinst for on-board upgrades, with
+`t2-mkfit` (which `t2-utils` ships): the card's `/Image` carries the installer
+ramdisk, the eMMC's `/Image` (from `/Image.emmc`) carries the initramfs-tools
+image.
+The reason is coupling: the installer ramdisk carries the installer, which is
+iterated constantly and is tied to the rootfs image format, so embedding it
+would make every installer tweak a kernel rebuild and make the two repositories
+depend on each other. The kernel repository builds a kernel; the boot FITs are
+someone else's build step.
 
-The initramfs itself lives in the image repository (`t2-initramfs`, installed
-on the board as `/boot/initramfs-t2.gz`). The `linux-image` packages here
-`Depends: t2-initramfs` so the file is present when the postinst assembles the
-FIT.
+The installer ramdisk itself lives in the image repository (`t2-initramfs`,
+installed on the board as `/boot/initramfs-t2.gz`). The `linux-image` packages
+here `Depends: t2-initramfs` so the postinst has a ramdisk to fall back on: it
+prefers the distribution's `/boot/initrd.img-<rel>`, which the rootfs build and
+`update-initramfs` provide.
 
 ## Release string and package version
 
@@ -81,10 +85,10 @@ no edit here:
 | `7.3.0-rc5` | `7.3~rc5` | `~` sorts an rc *before* the final `7.3` |
 | `7.4.2` | `7.4.2` | sublevel kept when it is not 0 |
 
-The Debian revision is `T2_KERNEL_ABI`, default `1`
-(`linux-image-7.3.0-rc5-t2_7.3~rc5-1_arm64.deb`). It is the knob for a
-config-only rebuild that must supersede the packages already installed: bump it
-(`T2_KERNEL_ABI=2 ./package.sh`) without changing the source.
+The Debian revision is `T2_KERNEL_ABI`, default `2`
+(`linux-image-7.3.0-rc5-t2_7.3~rc5-2_arm64.deb`). It is the knob for a rebuild
+that must supersede the packages already installed: bump it
+(`T2_KERNEL_ABI=3 ./package.sh`) without changing the source.
 
 ## The packages
 
@@ -94,8 +98,8 @@ contract in `split-contract.md` §5:
 
 * `linux-image-<rel>` — `/boot/Image` (plain, no initramfs) and
   `/boot/rk3568-t2.dtb`; `Depends: t2-utils, t2-initramfs`. Its postinst
-  assembles the boot FIT and installs it into the boot tree, honouring the A/B
-  rules (`/Image` primary, the previous kernel promoted to `/Image.old`, the
+  assembles the eMMC boot FIT and installs it into the boot tree, honouring the
+  A/B rules (`/Image` primary, the previous kernel promoted to `/Image.old`, the
   boot counter armed only when `/Image.old` exists).
 * `linux-modules-<rel>` — `/lib/modules/<rel>/`, `Depends:
   linux-image-<rel> (= <version>)` so the two can never drift.

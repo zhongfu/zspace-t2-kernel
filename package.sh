@@ -24,11 +24,11 @@
 #   T2_KERNEL_OUT      build.sh's output dir (default: <repo>/build/out)
 #   T2_KERNEL_MODULES  module tree to package (default: <out>/modules/lib/modules/<rel>)
 #   T2_KERNEL_DEBS     where the .debs go    (default: <repo>/build/debs)
-#   T2_KERNEL_ABI      Debian revision       (default: 1)
+#   T2_KERNEL_ABI      Debian revision       (default: 2)
 #
 # The release string and the Debian version are derived, never configured; see
-# README.md.  A config-only rebuild that must supersede the previous packages
-# bumps T2_KERNEL_ABI (T2_KERNEL_ABI=2 package.sh).
+# README.md.  A rebuild that must supersede the previous packages bumps
+# T2_KERNEL_ABI (T2_KERNEL_ABI=3 package.sh).
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -36,7 +36,11 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 tree=${T2_KERNEL_TREE:-$here/build/kernel}
 out=${T2_KERNEL_OUT:-$here/build/out}
 debs=${T2_KERNEL_DEBS:-$here/build/debs}
-abi=${T2_KERNEL_ABI:-1}
+# T2_KERNEL_ABI is the Debian revision: the knob a config-only rebuild bumps, and
+# any release whose *packages* change while the kernel does not - the linux-image
+# postinst changed in the release that added initramfs-tools, and a board cannot
+# install a deb whose version it already has and tell the difference.
+abi=${T2_KERNEL_ABI:-2}
 arch=arm64
 
 usage() {
@@ -129,7 +133,7 @@ fi
 version=$upstream-$abi
 
 # The package names are the contract §4 artefact names -
-# linux-image-7.3.0-rc5-t2_7.3~rc5-1_arm64.deb.  $rel already ends in the local
+# linux-image-7.3.0-rc5-t2_7.3~rc5-2_arm64.deb.  $rel already ends in the local
 # version (-t2, from CONFIG_LOCALVERSION), so the `-t2` in §5's
 # "linux-image-<rel>-t2" template is that suffix, not a second one.
 image_name=linux-image-$rel
